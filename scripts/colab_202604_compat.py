@@ -17,8 +17,6 @@ SITECUSTOMIZE_MARKER = "Style-Bert-VITS2 Colab 2026.04 compatibility shims"
 
 SITECUSTOMIZE_BODY = '''# Style-Bert-VITS2 Colab 2026.04 compatibility shims
 
-from __future__ import annotations
-
 from typing import NamedTuple
 
 try:
@@ -83,13 +81,38 @@ def sysconfig_path() -> str:
     return sysconfig.get_paths()["purelib"]
 
 
-def write_sitecustomize() -> Path:
-    path = sitecustomize_path()
+def append_sitecustomize(path: Path) -> None:
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     if SITECUSTOMIZE_MARKER not in existing:
         separator = "\n\n" if existing and not existing.endswith("\n\n") else ""
         path.write_text(existing + separator + SITECUSTOMIZE_BODY, encoding="utf-8")
-    return path
+
+
+def write_sitecustomize() -> list[Path]:
+    paths = [sitecustomize_path(), Path.cwd() / "sitecustomize.py"]
+    written_paths = []
+    for path in paths:
+        append_sitecustomize(path)
+        written_paths.append(path)
+    return written_paths
+
+
+def verify_subprocess_torchaudio() -> tuple[bool, bool]:
+    import subprocess
+
+    code = (
+        "import torchaudio; "
+        "print(hasattr(torchaudio, 'list_audio_backends')); "
+        "print(hasattr(torchaudio, 'AudioMetaData'))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    lines = result.stdout.strip().splitlines()
+    return tuple(line == "True" for line in lines[-2:])
 
 
 def patch_lightning_cloud_io() -> tuple[bool, Path | None]:
@@ -115,7 +138,8 @@ def main() -> None:
     import torchaudio
 
     has_backends, has_metadata = patch_current_torchaudio()
-    sitecustomize = write_sitecustomize()
+    sitecustomize_paths = write_sitecustomize()
+    subprocess_has_backends, subprocess_has_metadata = verify_subprocess_torchaudio()
     cloud_io_patched, cloud_io_path = patch_lightning_cloud_io()
 
     print("Colab 2026.04 compatibility check")
@@ -123,7 +147,10 @@ def main() -> None:
     print(f"torchaudio: {torchaudio.__version__}")
     print(f"torchaudio.list_audio_backends: {has_backends}")
     print(f"torchaudio.AudioMetaData: {has_metadata}")
-    print(f"sitecustomize: {sitecustomize}")
+    for path in sitecustomize_paths:
+        print(f"sitecustomize: {path}")
+    print(f"subprocess torchaudio.list_audio_backends: {subprocess_has_backends}")
+    print(f"subprocess torchaudio.AudioMetaData: {subprocess_has_metadata}")
     print(f"lightning cloud_io patched: {cloud_io_patched}")
     if cloud_io_path is not None:
         print(f"lightning cloud_io: {cloud_io_path}")
