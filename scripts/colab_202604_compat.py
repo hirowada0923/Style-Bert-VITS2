@@ -14,8 +14,10 @@ from typing import NamedTuple
 
 
 SITECUSTOMIZE_MARKER = "Style-Bert-VITS2 Colab 2026.04 compatibility shims"
+RUNTIME_PATCH_MODULE = "colab_202604_runtime_patch"
+PTH_FILENAME = "style_bert_vits2_colab_202604.pth"
 
-SITECUSTOMIZE_BODY = '''# Style-Bert-VITS2 Colab 2026.04 compatibility shims
+TORCHAUDIO_PATCH_BODY = '''# Style-Bert-VITS2 Colab 2026.04 compatibility shims
 
 from typing import NamedTuple
 
@@ -85,15 +87,36 @@ def append_sitecustomize(path: Path) -> None:
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     if SITECUSTOMIZE_MARKER not in existing:
         separator = "\n\n" if existing and not existing.endswith("\n\n") else ""
-        path.write_text(existing + separator + SITECUSTOMIZE_BODY, encoding="utf-8")
+        path.write_text(existing + separator + TORCHAUDIO_PATCH_BODY, encoding="utf-8")
 
 
-def write_sitecustomize() -> list[Path]:
-    paths = [sitecustomize_path(), Path.cwd() / "sitecustomize.py"]
+def site_packages_path() -> Path:
+    candidates = site.getsitepackages()
+    if candidates:
+        return Path(candidates[0])
+    return Path(sysconfig_path())
+
+
+def write_python_startup_hooks() -> list[Path]:
+    repo_root = Path.cwd()
+    site_packages = site_packages_path()
+    paths = [sitecustomize_path(), repo_root / "sitecustomize.py"]
     written_paths = []
     for path in paths:
         append_sitecustomize(path)
         written_paths.append(path)
+
+    runtime_patch = repo_root / f"{RUNTIME_PATCH_MODULE}.py"
+    runtime_patch.write_text(TORCHAUDIO_PATCH_BODY, encoding="utf-8")
+    written_paths.append(runtime_patch)
+
+    pth_path = site_packages / PTH_FILENAME
+    pth_line = (
+        f"import sys; sys.path.insert(0, {str(repo_root)!r}); "
+        f"import {RUNTIME_PATCH_MODULE}\n"
+    )
+    pth_path.write_text(pth_line, encoding="utf-8")
+    written_paths.append(pth_path)
     return written_paths
 
 
@@ -138,7 +161,7 @@ def main() -> None:
     import torchaudio
 
     has_backends, has_metadata = patch_current_torchaudio()
-    sitecustomize_paths = write_sitecustomize()
+    startup_hook_paths = write_python_startup_hooks()
     subprocess_has_backends, subprocess_has_metadata = verify_subprocess_torchaudio()
     cloud_io_patched, cloud_io_path = patch_lightning_cloud_io()
 
@@ -147,8 +170,8 @@ def main() -> None:
     print(f"torchaudio: {torchaudio.__version__}")
     print(f"torchaudio.list_audio_backends: {has_backends}")
     print(f"torchaudio.AudioMetaData: {has_metadata}")
-    for path in sitecustomize_paths:
-        print(f"sitecustomize: {path}")
+    for path in startup_hook_paths:
+        print(f"python startup hook: {path}")
     print(f"subprocess torchaudio.list_audio_backends: {subprocess_has_backends}")
     print(f"subprocess torchaudio.AudioMetaData: {subprocess_has_metadata}")
     print(f"lightning cloud_io patched: {cloud_io_patched}")
