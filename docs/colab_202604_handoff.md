@@ -151,13 +151,18 @@ if not hasattr(torchaudio, "AudioMetaData"):
 
 Patching only the current notebook process is not enough.
 
-`style_gen.py` is launched in a subprocess, so the patch must be available to subprocesses. Prefer one of these approaches:
+`slice.py` and `style_gen.py` are launched in subprocesses, so the patch must be available when a fresh Python process starts.
 
-- create/update `sitecustomize.py`, or
-- run a reusable compatibility script before subprocesses start, or
-- patch the relevant script in a controlled, documented way.
+In Colab 2026.04, writing `sitecustomize.py` alone was not sufficient. The verified implementation writes:
+
+- `sitecustomize.py` in site-packages
+- `sitecustomize.py` in the repository root
+- `colab_202604_runtime_patch.py` in the repository root
+- `style_bert_vits2_colab_202604.pth` in site-packages
 
 The recommended maintainable approach is to put this in `scripts/colab_202604_compat.py`.
+
+The `.pth` file imports the repository-local runtime patch module at Python startup. This is what made the torchaudio shims visible to subprocesses such as `python slice.py`.
 
 ## 6. PyTorch 2.6+ torch.load weights_only issue
 
@@ -187,11 +192,19 @@ lightning_fabric.utilities.cloud_io
 
 Patch `lightning_fabric.utilities.cloud_io` so that its `torch.load` path uses `weights_only=False`.
 
-The working manual patch was effectively:
+The first manual patch was effectively:
 
 ```python
 text = text.replace("weights_only=weights_only", "weights_only=False")
 ```
+
+The final verified implementation also installs a runtime `torch.load` wrapper through the `.pth` startup hook. When the call stack comes from `lightning_fabric/utilities/cloud_io.py`, it forces:
+
+```python
+kwargs["weights_only"] = False
+```
+
+This wrapper is needed because Colab 2026.04 / `lightning_fabric` may still pass a `weights_only` keyword that overrides a simple source replacement.
 
 ### Security note
 
@@ -229,14 +242,29 @@ The compatibility script should:
 1. Patch current-process torchaudio compatibility:
    - `list_audio_backends`
    - `AudioMetaData`
-2. Create or update `sitecustomize.py` so subprocesses receive the torchaudio compatibility shims.
-3. Patch `lightning_fabric.utilities.cloud_io` to use `weights_only=False` for the trusted checkpoint loading path.
+2. Install Python startup hooks so subprocesses receive the compatibility shims:
+   - site-packages `sitecustomize.py`
+   - repository-root `sitecustomize.py`
+   - repository-root `colab_202604_runtime_patch.py`
+   - site-packages `.pth` file importing the runtime patch
+3. Patch `lightning_fabric.utilities.cloud_io` and install a runtime `torch.load` wrapper so the trusted pyannote checkpoint loading path uses `weights_only=False`.
 4. Print concise verification output:
    - torch version
    - torchaudio version
    - whether `list_audio_backends` exists
    - whether `AudioMetaData` exists
+   - whether subprocesses see the torchaudio shims
+   - whether subprocesses see the `torch.load` cloud_io wrapper
    - whether cloud_io has been patched
+
+Expected successful verification lines include:
+
+```text
+subprocess torchaudio.list_audio_backends: True
+subprocess torchaudio.AudioMetaData: True
+subprocess torch.load cloud_io patch: True
+lightning cloud_io patched: True
+```
 
 ## Acceptance criteria
 
@@ -264,6 +292,37 @@ Success: All preprocess finished!
 ```
 
 and training started successfully afterward.
+
+## Verified repository implementation
+
+Verified in Google Colab on 2026-05-02 with runtime 2026.04 / latest:
+
+- repository cloned from `https://github.com/hirowada0923/Style-Bert-VITS2`
+- dependencies installed with `requirements-colab.txt` plus `constraints-colab-202604.txt`
+- `scripts/colab_202604_compat.py` run after dependency installation
+- `2.1` slicing and transcription completed successfully
+- `3` training preprocessing completed with `Success: All preprocess finished!`
+- `4` training started successfully and showed an estimated training time of about 1 hour
+
+The final `3` preprocessing run still emitted non-fatal warnings:
+
+- TensorFlow CPU feature information during text preprocessing / BERT generation
+- pyannote TF32 reproducibility warning during style generation
+- torchaudio TorchCodec backend warning during style generation
+
+These warnings did not block preprocessing or training startup.
+
+## Colab rerun notes
+
+After pulling updates in an already-running Colab session, rerun the compatibility script before retrying failed steps:
+
+```bash
+cd /content/Style-Bert-VITS2
+git pull
+python scripts/colab_202604_compat.py
+```
+
+For a clean notebook run, the environment setup cell already runs the compatibility script after dependency installation.
 
 ## Suggested first Codex task
 
