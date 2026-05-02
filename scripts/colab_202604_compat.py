@@ -53,12 +53,11 @@ if torch is not None and not getattr(torch.load, "_style_bert_vits2_colab_202604
     _original_torch_load = torch.load
 
     def _torch_load_for_lightning_cloud_io(*args, **kwargs):
-        if "weights_only" not in kwargs:
-            for frame in inspect.stack()[1:8]:
-                filename = frame.filename.replace("\\\\", "/")
-                if filename.endswith("lightning_fabric/utilities/cloud_io.py"):
-                    kwargs["weights_only"] = False
-                    break
+        for frame in inspect.stack()[1:8]:
+            filename = frame.filename.replace("\\\\", "/")
+            if filename.endswith("lightning_fabric/utilities/cloud_io.py"):
+                kwargs["weights_only"] = False
+                break
         return _original_torch_load(*args, **kwargs)
 
     _torch_load_for_lightning_cloud_io._style_bert_vits2_colab_202604 = True
