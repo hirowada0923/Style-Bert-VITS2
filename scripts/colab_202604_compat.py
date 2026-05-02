@@ -42,6 +42,27 @@ if torchaudio is not None:
             encoding: str
 
         torchaudio.AudioMetaData = AudioMetaData
+
+try:
+    import inspect
+    import torch
+except Exception:
+    torch = None
+
+if torch is not None and not getattr(torch.load, "_style_bert_vits2_colab_202604", False):
+    _original_torch_load = torch.load
+
+    def _torch_load_for_lightning_cloud_io(*args, **kwargs):
+        if "weights_only" not in kwargs:
+            for frame in inspect.stack()[1:8]:
+                filename = frame.filename.replace("\\\\", "/")
+                if filename.endswith("lightning_fabric/utilities/cloud_io.py"):
+                    kwargs["weights_only"] = False
+                    break
+        return _original_torch_load(*args, **kwargs)
+
+    _torch_load_for_lightning_cloud_io._style_bert_vits2_colab_202604 = True
+    torch.load = _torch_load_for_lightning_cloud_io
 '''
 
 
@@ -138,6 +159,22 @@ def verify_subprocess_torchaudio() -> tuple[bool, bool]:
     return tuple(line == "True" for line in lines[-2:])
 
 
+def verify_subprocess_torch_load_patch() -> bool:
+    import subprocess
+
+    code = (
+        "import torch; "
+        "print(getattr(torch.load, '_style_bert_vits2_colab_202604', False))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip().splitlines()[-1] == "True"
+
+
 def patch_lightning_cloud_io() -> tuple[bool, Path | None]:
     spec = importlib.util.find_spec("lightning_fabric.utilities.cloud_io")
     if spec is None or spec.origin is None:
@@ -163,6 +200,7 @@ def main() -> None:
     has_backends, has_metadata = patch_current_torchaudio()
     startup_hook_paths = write_python_startup_hooks()
     subprocess_has_backends, subprocess_has_metadata = verify_subprocess_torchaudio()
+    subprocess_has_torch_load_patch = verify_subprocess_torch_load_patch()
     cloud_io_patched, cloud_io_path = patch_lightning_cloud_io()
 
     print("Colab 2026.04 compatibility check")
@@ -174,6 +212,7 @@ def main() -> None:
         print(f"python startup hook: {path}")
     print(f"subprocess torchaudio.list_audio_backends: {subprocess_has_backends}")
     print(f"subprocess torchaudio.AudioMetaData: {subprocess_has_metadata}")
+    print(f"subprocess torch.load cloud_io patch: {subprocess_has_torch_load_patch}")
     print(f"lightning cloud_io patched: {cloud_io_patched}")
     if cloud_io_path is not None:
         print(f"lightning cloud_io: {cloud_io_path}")
