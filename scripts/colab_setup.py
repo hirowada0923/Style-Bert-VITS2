@@ -145,15 +145,18 @@ def _install_venv_startup_hook() -> Path:
     return pth_path
 
 
-def _verify_subprocess() -> None:
+def _verify_subprocess(expect_torch_load_shim: bool) -> None:
     code = (
-        "import matplotlib, soxr, torchaudio, pyannote.audio, transformers, librosa, "
+        "import matplotlib, soxr, torch, torchaudio, pyannote.audio, transformers, librosa, "
         "pyopenjtalk, tensorboard, pkg_resources; "
         "from transformers import WhisperProcessor, pipeline; "
         "assert hasattr(torchaudio, 'list_audio_backends'), 'missing list_audio_backends'; "
         "assert hasattr(torchaudio, 'AudioMetaData'), 'missing AudioMetaData'; "
         "assert matplotlib.get_backend().lower() == 'agg', "
         "f'unexpected matplotlib backend: {matplotlib.get_backend()}'; "
+        f"expect_shim = {expect_torch_load_shim!r}; "
+        "assert (not expect_shim) or getattr(torch.load, '_style_bert_vits2_colab_compat', False), "
+        "'missing torch.load cloud_io wrapper'; "
         "print('subprocess_imports_ok=True')"
     )
     env = os.environ.copy()
@@ -237,8 +240,15 @@ def verify_in_venv() -> None:
         pipeline,
     )
 
+    from transformers.utils import import_utils as tf_import_utils
+
     tf_major = _parse_major_minor(transformers.__version__)[0]
     assert tf_major < 5, f"Expected transformers<5, got {transformers.__version__}"
+
+    check_torch_load_is_safe = getattr(tf_import_utils, "check_torch_load_is_safe", None)
+    if check_torch_load_is_safe is not None:
+        check_torch_load_is_safe()
+        print("transformers torch.load safety check: OK")
 
     print(f"transformers: {transformers.__version__}, huggingface_hub: {huggingface_hub.__version__}")
     print(f"gradio: {gradio.__version__}, pydantic: {pydantic.__version__}")
@@ -253,7 +263,7 @@ def verify_in_venv() -> None:
         f"matplotlib={matplotlib.__version__}"
     )
 
-    _verify_subprocess()
+    _verify_subprocess(needs_torch_load_shim)
     print("colab_setup verification passed!")
 
 

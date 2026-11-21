@@ -29,7 +29,7 @@ Instead of fighting Colab's global Python 3.13 upgrades, `colab.ipynb` now provi
 1. `python3 -m pip install -q uv`
 2. `python3 scripts/colab_setup.py`
    - Creates `.venv` with Python `3.12` via `uv venv .venv --python 3.12`
-   - Installs `requirements-colab.txt`, `requirements-colab-202611.txt`, and `constraints-colab-202611.txt` with `--torch-backend cu124`
+   - Installs `requirements-colab.txt`, `requirements-colab-202611.txt`, and `constraints-colab-202611.txt` with `--torch-backend cu124` (`torch==2.6.0`, `torchaudio==2.6.0`, `torchvision==0.21.0`)
    - Runs `.venv/bin/python scripts/colab_setup.py --verify-in-venv` to verify versions, imports, CUDA availability, and subprocess startup
 3. All repository scripts (`initialize.py`, `slice.py`, `transcribe.py`, `preprocess_all.py`, `train_ms_jp_extra.py`, `train_ms.py`, `app.py`, `convert_onnx.py`) run explicitly via `.venv/bin/python`.
 4. Notebook Python cells that run in Colab's host kernel (`configs/paths.yml` and `config.yml` generation) use only Python stdlib + `pyyaml` and never import `gradio_tabs.train` or `style_bert_vits2`.
@@ -51,21 +51,21 @@ Packages previously supplied implicitly by Colab's global Python or omitted by `
 ### `constraints-colab-202611.txt`
 
 - `numpy==1.26.4`: required by `librosa==0.9.2` and Style-Bert-VITS2
-- `torch==2.5.1`, `torchaudio==2.5.1`, `torchvision==0.20.1`: coherent CUDA 12.4 wheel stack (`--torch-backend cu124`); preserves native `torchaudio.list_audio_backends`, `torchaudio.AudioMetaData`, `torch.backends.cuda.sdp_kernel`, and pre-2.6 `torch.load` defaults
+- `torch==2.6.0`, `torchaudio==2.6.0`, `torchvision==0.21.0`: coherent CUDA 12.4 wheel stack (`--torch-backend cu124`); required because `transformers==4.57.6` enforces `torch >= 2.6` (`check_torch_load_is_safe()` / CVE-2025-32434) when loading `.bin` checkpoints such as `bert/deberta-v2-large-japanese-char-wwm/pytorch_model.bin`, while `torchaudio==2.6.0` still retains native `list_audio_backends` / `AudioMetaData`
 - `transformers>=4.34.0,<5.0.0` & `huggingface-hub<1.0.0`: avoids `transformers 5.x` and `huggingface-hub 1.x` breaking changes
 - `pyannote.audio>=3.1.0,<4.0.0`, `lightning<2.6.0`, `pytorch-lightning<2.6.0`: avoids `pyannote.audio 4.x` (`torchcodec` / `token`) breaks and `lightning 2.6+` forcing `weights_only=True` when loading `pyannote/wespeaker-voxceleb-resnet34-LM`
 - `gradio>=4.32,<5.0.0`, `pydantic>=2.0,<2.10`, `fastapi<0.116`: avoids Gradio 5/6 `Blocks(theme=...)` breaks and the Gradio 4.44 + Pydantic 2.10+ `bool is not iterable` schema bug
 - `setuptools<81`: preserves `pkg_resources` without `setuptools 81+` deprecation warnings
 
-### `.venv` startup hook (`MPLBACKEND` & defensive shims)
+### `.venv` startup hook (`MPLBACKEND` & `torch.load` shim)
 
-Colab exports `MPLBACKEND=module://matplotlib_inline.backend_inline` and `UV_SYSTEM_PYTHON=1` in the notebook kernel environment. Because `matplotlib_inline` is not installed inside `.venv`, any `.venv/bin/python` process importing `matplotlib` crashes with `ValueError: Key backend: 'module://matplotlib_inline.backend_inline' is not a valid value for backend`.
+Colab exports `MPLBACKEND=module://matplotlib_inline.backend_inline` and `UV_SYSTEM_PYTHON=1` in the notebook kernel environment. Because `matplotlib_inline` is not installed inside `.venv`, any `.venv/bin/python` process importing `matplotlib` crashes with `ValueError: Key backend: 'module://matplotlib_inline.backend_inline' is not a valid value for backend`. Also, PyTorch 2.6 changed `torch.load(..., weights_only=...)` to default to `True`, which breaks loading `pyannote/wespeaker-voxceleb-resnet34-LM` through `lightning_fabric/utilities/cloud_io.py`.
 
-To handle this cleanly without touching upstream code:
+To handle both cleanly without touching upstream code:
 
 - `scripts/colab_setup.py` strips `UV_SYSTEM_PYTHON` when invoking `uv` so `uv venv` does not emit the `--system` warning.
 - `scripts/colab_setup.py --verify-in-venv` installs `_style_bert_vits2_colab_compat.py` + `style_bert_vits2_colab_compat.pth` inside `.venv`'s `site-packages`, resetting `MPLBACKEND` from `module://matplotlib_inline*` to `Agg` at startup for every `.venv/bin/python` process and subprocess.
-- It also keeps conditional `torchaudio` / `torch >= 2.6` guards as no-ops on `torch==2.5.1` + `torchaudio==2.5.1`, activating only if someone overrides those pins.
+- On `torch >= 2.6`, the `.pth` startup hook also wraps `torch.load` so calls originating from `lightning_fabric/utilities/cloud_io.py` pass `weights_only=False` for the trusted `pyannote/wespeaker-voxceleb-resnet34-LM` checkpoint (and provides conditional `torchaudio` shims if `torchaudio` is ever overridden).
 
 ## Colab rerun / update notes
 
