@@ -147,8 +147,9 @@ def _install_venv_startup_hook() -> Path:
 
 def _verify_subprocess() -> None:
     code = (
-        "import matplotlib, torchaudio, pyannote.audio, transformers, librosa, "
+        "import matplotlib, soxr, torchaudio, pyannote.audio, transformers, librosa, "
         "pyopenjtalk, tensorboard, pkg_resources; "
+        "from transformers import WhisperProcessor, pipeline; "
         "assert hasattr(torchaudio, 'list_audio_backends'), 'missing list_audio_backends'; "
         "assert hasattr(torchaudio, 'AudioMetaData'), 'missing AudioMetaData'; "
         "assert matplotlib.get_backend().lower() == 'agg', "
@@ -222,9 +223,19 @@ def verify_in_venv() -> None:
     import pyworld
     import sentencepiece  # noqa: F401
     import soundfile
+    import soxr
     import tensorboard
     import transformers
     from pyannote.audio import Inference, Model  # noqa: F401
+    from transformers import (  # noqa: F401
+        AutoModel,
+        AutoModelForMaskedLM,
+        AutoTokenizer,
+        DebertaV2Model,
+        DebertaV2TokenizerFast,
+        WhisperProcessor,
+        pipeline,
+    )
 
     tf_major = _parse_major_minor(transformers.__version__)[0]
     assert tf_major < 5, f"Expected transformers<5, got {transformers.__version__}"
@@ -233,6 +244,7 @@ def verify_in_venv() -> None:
     print(f"gradio: {gradio.__version__}, pydantic: {pydantic.__version__}")
     print(
         f"audio/nlp: librosa={librosa.__version__}, soundfile={soundfile.__version__}, "
+        f"soxr={soxr.__version__}, "
         f"pyopenjtalk={getattr(pyopenjtalk, '__version__', 'installed')}, "
         f"pyworld={getattr(pyworld, '__version__', 'installed')}"
     )

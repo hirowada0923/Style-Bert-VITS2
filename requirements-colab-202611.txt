@@ -3,5 +3,6 @@
 matplotlib
 sentencepiece
 setuptools<81
+soxr
 tensorboard
 wheel

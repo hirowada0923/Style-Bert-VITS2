@@ -44,6 +44,7 @@ Packages previously supplied implicitly by Colab's global Python or omitted by `
 - `matplotlib`: plotting spectrograms in training utils and clustering UI
 - `sentencepiece`: tokenizer dependency for English DeBERTa v3 (`spm.model`) when `use_jp_extra=False`
 - `setuptools<81`: retains `pkg_resources` without `setuptools 81+` deprecation warnings or `82.0.0` removal
+- `soxr`: required by `transformers/audio_utils.py` (`WhisperProcessor` during HF Whisper transcription) because `librosa==0.9.2` does not pull `soxr`
 - `tensorboard`: training logs and `SummaryWriter`
 - `wheel`: build helper
 
