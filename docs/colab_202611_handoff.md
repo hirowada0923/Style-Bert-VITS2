@@ -12,12 +12,13 @@ By November 2026, the default Google Colab runtime moved to **Python 3.13**, **P
 
 ## Confirmed host environment (2026-11-21)
 
-Observed on default Google Colab runtime:
+Observed on Google Colab GPU runtime:
 
-- Python `3.13.18` (`GCC 13.3.0`)
-- `torch`: `2.14.1+cpu` (note: that initial check ran on a CPU runtime without GPU attached)
-- `torchaudio`: `2.11.0+cpu`
+- Python `3.13.16` (`GCC 13.3.0`) on GPU runtime (and `3.13.18` on CPU runtime)
+- `torch`: `2.14.1+cu130` (GPU) / `2.14.1+cpu` (CPU)
+- `torchaudio`: `2.11.0+cu130` (GPU) / `2.11.0+cpu` (CPU)
 - `numpy`: `2.4.6`
+- GPU / driver tested: `Tesla T4`, NVIDIA Driver `580.82.07`
 
 > **Important:** Make sure a **GPU runtime** (`T4`, `L4`, `A100`, etc.) is selected in Colab (**Runtime > Change runtime type**) before running training or GPU-accelerated preprocessing.
 
@@ -42,7 +43,7 @@ Packages previously supplied implicitly by Colab's global Python or omitted by `
 
 - `matplotlib`: plotting spectrograms in training utils and clustering UI
 - `sentencepiece`: tokenizer dependency for English DeBERTa v3 (`spm.model`) when `use_jp_extra=False`
-- `setuptools<82`: retains `pkg_resources` removed in `setuptools 82.0.0`
+- `setuptools<81`: retains `pkg_resources` without `setuptools 81+` deprecation warnings or `82.0.0` removal
 - `tensorboard`: training logs and `SummaryWriter`
 - `wheel`: build helper
 
@@ -51,13 +52,19 @@ Packages previously supplied implicitly by Colab's global Python or omitted by `
 - `numpy==1.26.4`: required by `librosa==0.9.2` and Style-Bert-VITS2
 - `torch==2.5.1`, `torchaudio==2.5.1`, `torchvision==0.20.1`: coherent CUDA 12.4 wheel stack (`--torch-backend cu124`); preserves native `torchaudio.list_audio_backends`, `torchaudio.AudioMetaData`, `torch.backends.cuda.sdp_kernel`, and pre-2.6 `torch.load` defaults
 - `transformers>=4.34.0,<5.0.0` & `huggingface-hub<1.0.0`: avoids `transformers 5.x` and `huggingface-hub 1.x` breaking changes
-- `pyannote.audio>=3.1.0,<4.0.0`: avoids `pyannote.audio 4.x` (`torchcodec` / `token` breaking changes)
+- `pyannote.audio>=3.1.0,<4.0.0`, `lightning<2.6.0`, `pytorch-lightning<2.6.0`: avoids `pyannote.audio 4.x` (`torchcodec` / `token`) breaks and `lightning 2.6+` forcing `weights_only=True` when loading `pyannote/wespeaker-voxceleb-resnet34-LM`
 - `gradio>=4.32,<5.0.0`, `pydantic>=2.0,<2.10`, `fastapi<0.116`: avoids Gradio 5/6 `Blocks(theme=...)` breaks and the Gradio 4.44 + Pydantic 2.10+ `bool is not iterable` schema bug
-- `setuptools<82`: preserves `pkg_resources`
+- `setuptools<81`: preserves `pkg_resources` without `setuptools 81+` deprecation warnings
 
-### Defensive compatibility shims
+### `.venv` startup hook (`MPLBACKEND` & defensive shims)
 
-On the pinned `torch==2.5.1` + `torchaudio==2.5.1` stack, no runtime monkeypatches are required. However, `scripts/colab_setup.py --verify-in-venv` still checks `torchaudio` attributes and `torch >= 2.6`, and only writes `.venv`'s `site-packages/style_bert_vits2_colab_compat.pth` if a future override removes those APIs.
+Colab exports `MPLBACKEND=module://matplotlib_inline.backend_inline` and `UV_SYSTEM_PYTHON=1` in the notebook kernel environment. Because `matplotlib_inline` is not installed inside `.venv`, any `.venv/bin/python` process importing `matplotlib` crashes with `ValueError: Key backend: 'module://matplotlib_inline.backend_inline' is not a valid value for backend`.
+
+To handle this cleanly without touching upstream code:
+
+- `scripts/colab_setup.py` strips `UV_SYSTEM_PYTHON` when invoking `uv` so `uv venv` does not emit the `--system` warning.
+- `scripts/colab_setup.py --verify-in-venv` installs `_style_bert_vits2_colab_compat.py` + `style_bert_vits2_colab_compat.pth` inside `.venv`'s `site-packages`, resetting `MPLBACKEND` from `module://matplotlib_inline*` to `Agg` at startup for every `.venv/bin/python` process and subprocess.
+- It also keeps conditional `torchaudio` / `torch >= 2.6` guards as no-ops on `torch==2.5.1` + `torchaudio==2.5.1`, activating only if someone overrides those pins.
 
 ## Colab rerun / update notes
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import shutil
 import site
 import subprocess
@@ -25,7 +26,12 @@ COMPAT_MODULE_BODY = '''"""Runtime compatibility shims for Style-Bert-VITS2 insi
 
 from __future__ import annotations
 
+import os
 from typing import NamedTuple
+
+
+if os.environ.get("MPLBACKEND", "").startswith("module://matplotlib_inline"):
+    os.environ["MPLBACKEND"] = "Agg"
 
 
 def _parse_major_minor(version_str: str) -> tuple[int, int]:
@@ -124,17 +130,10 @@ def _site_packages_dir() -> Path:
     return Path(sysconfig.get_paths()["purelib"])
 
 
-def _sync_compat_shims(needs_torchaudio_shim: bool, needs_torch_load_shim: bool) -> bool:
+def _install_venv_startup_hook() -> Path:
     site_packages = _site_packages_dir()
     module_path = site_packages / f"{COMPAT_MODULE_NAME}.py"
     pth_path = site_packages / COMPAT_PTH_NAME
-
-    if not (needs_torchaudio_shim or needs_torch_load_shim):
-        if pth_path.exists():
-            pth_path.unlink()
-        if module_path.exists():
-            module_path.unlink()
-        return False
 
     module_path.write_text(COMPAT_MODULE_BODY, encoding="utf-8")
     pth_path.write_text(f"import {COMPAT_MODULE_NAME}\n", encoding="utf-8")
@@ -143,19 +142,24 @@ def _sync_compat_shims(needs_torchaudio_shim: bool, needs_torch_load_shim: bool)
     if COMPAT_MODULE_NAME in sys.modules:
         del sys.modules[COMPAT_MODULE_NAME]
     importlib.import_module(COMPAT_MODULE_NAME)
-    return True
+    return pth_path
 
 
 def _verify_subprocess() -> None:
     code = (
-        "import torchaudio, pyannote.audio, transformers, librosa, pyopenjtalk, "
-        "tensorboard, pkg_resources; "
+        "import matplotlib, torchaudio, pyannote.audio, transformers, librosa, "
+        "pyopenjtalk, tensorboard, pkg_resources; "
         "assert hasattr(torchaudio, 'list_audio_backends'), 'missing list_audio_backends'; "
         "assert hasattr(torchaudio, 'AudioMetaData'), 'missing AudioMetaData'; "
+        "assert matplotlib.get_backend().lower() == 'agg', "
+        "f'unexpected matplotlib backend: {matplotlib.get_backend()}'; "
         "print('subprocess_imports_ok=True')"
     )
+    env = os.environ.copy()
+    env["MPLBACKEND"] = "module://matplotlib_inline.backend_inline"
     result = subprocess.run(
         [sys.executable, "-c", code],
+        env=env,
         check=True,
         capture_output=True,
         text=True,
@@ -202,14 +206,11 @@ def verify_in_venv() -> None:
 
     needs_torchaudio_shim = not (has_backends and has_metadata)
     needs_torch_load_shim = torch_mm >= (2, 6)
-    shims_installed = _sync_compat_shims(needs_torchaudio_shim, needs_torch_load_shim)
-    if shims_installed:
-        print(
-            "compat shims installed: True "
-            f"(torchaudio={needs_torchaudio_shim}, torch_load={needs_torch_load_shim})"
-        )
-    else:
-        print("compat shims needed: False (native torch/torchaudio APIs available)")
+    pth_path = _install_venv_startup_hook()
+    print(
+        f"compat hook installed: {pth_path} "
+        f"(torchaudio_shim={needs_torchaudio_shim}, torch_load_shim={needs_torch_load_shim})"
+    )
 
     import gradio
     import huggingface_hub
@@ -252,6 +253,7 @@ def run_host_setup(args: argparse.Namespace) -> None:
 
     if not args.skip_install:
         uv_cmd = _find_uv_command()
+        uv_env = {k: v for k, v in os.environ.items() if k != "UV_SYSTEM_PYTHON"}
         if args.recreate and venv_dir.exists():
             print(f"Removing existing virtualenv: {venv_dir}")
             shutil.rmtree(venv_dir)
@@ -261,6 +263,7 @@ def run_host_setup(args: argparse.Namespace) -> None:
             subprocess.run(
                 [*uv_cmd, "venv", str(venv_dir), "--python", args.python],
                 cwd=repo_root,
+                env=uv_env,
                 check=True,
             )
 
@@ -283,6 +286,7 @@ def run_host_setup(args: argparse.Namespace) -> None:
                 "--no-progress",
             ],
             cwd=repo_root,
+            env=uv_env,
             check=True,
         )
     elif not venv_python.exists():
