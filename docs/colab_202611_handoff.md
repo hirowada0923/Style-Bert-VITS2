@@ -93,3 +93,22 @@ Before running, verify **Runtime > Change runtime type** has a GPU (`T4`, `L4`, 
 4. **Cell 3 (Training preprocessing)**: `.venv/bin/python preprocess_all.py ...` finishes with `Success: All preprocess finished!`.
 5. **Cell 4 (Training)**: `config.yml` is written and `.venv/bin/python train_ms_jp_extra.py ...` starts training without import/runtime errors.
 6. **Optional**: `.venv/bin/python app.py --share` launches Gradio WebUI without Pydantic/Blocks errors.
+
+## Verified repository implementation
+
+Verified end-to-end in Google Colab on `2026-11-21` at commit `8b7a7e7` (`Tesla T4`, NVIDIA Driver `580.82.07`):
+
+- **Colab host runtime**: `Python 3.13.16`, `torch 2.14.1+cu130`, `torchaudio 2.11.0+cu130`, `numpy 2.4.6`
+- **Isolated `.venv` stack**: `Python 3.12.3`, `numpy 1.26.4`, `torch==2.6.0` / `torchaudio==2.6.0` / `torchvision==0.21.0` (`--torch-backend cu124`), `transformers 4.57.6`, `pyannote-audio 3.4.0`, `lightning 2.5.6`, `gradio 4.44.1`, `pydantic 2.9.2`, `librosa 0.9.2`, `soxr`
+- **Steps verified**:
+  - **Cell 0**: `scripts/colab_setup.py` + `initialize.py --skip_default_models` completed cleanly without `exit()` runtime restart
+  - **Cell 1**: Google Drive mounted and `configs/paths.yml` configured
+  - **Cell 2.1**: `.venv/bin/python slice.py` (`Slice done! Total time: 0.39 min, 8 files.`) and `.venv/bin/python transcribe.py` (`openai/whisper-large-v3` on `cuda`) completed
+  - **Cell 3**: `.venv/bin/python preprocess_all.py` completed `initialize`, `resample.py`, `preprocess_text.py`, `bert_gen.py` (`8 bert.pt files`), and `style_gen.py` (`8 npy files`), ending with `Success: All preprocess finished!`
+  - **Cell 4**: `config.yml` written and `.venv/bin/python train_ms_jp_extra.py` loaded pretrained checkpoints and reached `Start training.`
+- **Non-fatal warnings observed**:
+  - `librosa/util/files.py` `UserWarning: pkg_resources is deprecated` (`setuptools<81`)
+  - `transformers` Whisper pipeline `torch_dtype` / `chunk_length_s` notices during `transcribe.py`
+  - `pyannote` TF32 `ReproducibilityWarning` during `style_gen.py`
+  - Expected initial `Missing key` warnings (`enc_p.style_proj.*`, `emb_g.weight`) when loading `G_0.safetensors`
+- **Not run in smoke test**: `app.py --share` and `convert_onnx.py` (covered by notebook/import validation only).
