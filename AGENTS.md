@@ -4,7 +4,7 @@
 
 This repository is a personal fork of Style-Bert-VITS2.
 
-The main maintenance goal is to keep the Google Colab notebook working on newer Google Colab runtimes, especially Colab runtime 2026.04 / latest.
+The main maintenance goal is to keep the Google Colab notebook working on newer Google Colab runtimes (currently Colab 2026.11 / latest with Python 3.13 host, and historically 2026.04).
 
 ## Development environment
 
@@ -26,7 +26,18 @@ Primary maintenance environment:
 - Before editing, explain the intended change and affected files.
 - Prefer small, reviewable commits.
 
-## Known Colab 2026.04 / latest fixes
+## Current Colab 2026.11 / latest setup (isolated `.venv`)
+
+Colab 2026.11 / latest runs Python 3.13 (`3.13.18`), `torch 2.14.1`, `torchaudio 2.11.0`, and `numpy 2.4.6` on the host runtime. Because `numpy==1.26.4` and legacy audio/build packages (`librosa==0.9.2`, `pyopenjtalk-dict`, etc.) do not support Python 3.13 or NumPy 2.x, `colab.ipynb` isolates Style-Bert-VITS2 inside `.venv` (`Python 3.12`) managed by `uv`:
+
+- `requirements-colab-202611.txt`: extra packages needed in `.venv` (`matplotlib`, `sentencepiece`, `setuptools<82`, `tensorboard`, `wheel`).
+- `constraints-colab-202611.txt`: coherent Python 3.12 / CUDA 12.4 constraints (`numpy==1.26.4`, `torch==2.5.1`, `torchaudio==2.5.1`, `torchvision==0.20.1`, `transformers>=4.34.0,<5.0.0`, `huggingface-hub<1.0.0`, `pyannote.audio>=3.1.0,<4.0.0`, `gradio>=4.32,<5.0.0`, `pydantic>=2.0,<2.10`, `fastapi<0.116`, `setuptools<82`).
+- `scripts/colab_setup.py`: stdlib-only host script that provisions `.venv` via `uv` (`--torch-backend cu124`) and verifies all imports and subprocess behavior inside `.venv/bin/python --verify-in-venv`.
+- All `colab.ipynb` script invocations (`initialize.py`, `slice.py`, `transcribe.py`, `preprocess_all.py`, `train_ms_jp_extra.py`, `train_ms.py`, `app.py`, `convert_onnx.py`) must use `.venv/bin/python`.
+- Host Python notebook cells must NOT import `gradio_tabs` or `style_bert_vits2`; use pure stdlib + `pyyaml` for `configs/paths.yml` and `config.yml`.
+- No `exit()` forced session restart is needed.
+
+## Historical Colab 2026.04 fixes (preserved for reference)
 
 ### Dependency constraints
 
@@ -91,30 +102,35 @@ OSError: Can't load feature extractor for ''
 
 ## Recommended implementation structure
 
-Prefer this structure for the Colab 2026.04 compatibility work:
+Prefer this structure for the current Colab compatibility work (while preserving historical `202604` files):
 
 ```text
 Style-Bert-VITS2/
 ├── AGENTS.md
-├── constraints-colab-202604.txt
+├── constraints-colab-202604.txt        # historical 2026.04
+├── constraints-colab-202611.txt        # current 2026.11+ (.venv Python 3.12)
+├── requirements-colab-202611.txt       # extra packages for isolated .venv
 ├── scripts/
-│   └── colab_202604_compat.py
+│   ├── colab_202604_compat.py          # historical 2026.04
+│   └── colab_setup.py                  # current .venv setup & verifier
 └── docs/
-    └── colab_202604_handoff.md
+    ├── colab_202604_handoff.md         # historical 2026.04
+    └── colab_202611_handoff.md         # current 2026.11+
 ```
 
 ## Manual smoke test
 
-Run in Google Colab:
+Run in Google Colab (with a GPU runtime such as T4, L4, or A100 selected):
 
-1. Environment setup
-2. Initial setup
-3. Audio slicing and transcription
-4. Training preprocessing
-5. Start training
+1. Environment setup (`colab_setup.py` + `initialize.py --skip_default_models`)
+2. Initial setup (`drive.mount` + `configs/paths.yml`)
+3. Audio slicing and transcription (`.venv/bin/python slice.py` + `transcribe.py`)
+4. Training preprocessing (`.venv/bin/python preprocess_all.py`)
+5. Start training (`.venv/bin/python train_ms_jp_extra.py` or `train_ms.py`)
 
 Expected result:
 
+- `colab_setup verification passed!` with `cuda_available=True`
 - preprocessing ends with `Success: All preprocess finished!`
 - training starts without immediate import/runtime errors
 
@@ -122,7 +138,7 @@ Expected result:
 
 When working in this repository:
 
-1. Read `AGENTS.md` and `docs/colab_202604_handoff.md` first.
+1. Read `AGENTS.md` and `docs/colab_202611_handoff.md` (plus `docs/colab_202604_handoff.md` for historical context) first.
 2. Inspect `colab.ipynb`, `requirements-colab.txt`, and any Colab-specific files before editing.
 3. First propose a small implementation plan and list affected files.
 4. Keep changes narrow and reversible.

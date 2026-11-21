@@ -1,0 +1,12 @@
+# Google Colab 2026.11 / latest isolated Python 3.12 virtualenv constraints
+numpy==1.26.4
+torch==2.5.1
+torchaudio==2.5.1
+torchvision==0.20.1
+transformers>=4.34.0,<5.0.0
+huggingface-hub<1.0.0
+pyannote.audio>=3.1.0,<4.0.0
+gradio>=4.32,<5.0.0
+pydantic>=2.0,<2.10
+fastapi<0.116
+setuptools<82

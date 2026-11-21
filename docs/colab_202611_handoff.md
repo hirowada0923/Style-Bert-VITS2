@@ -1,0 +1,87 @@
+# Colab 2026.11 / latest handoff
+
+## Background
+
+In April 2026, [docs/colab_202604_handoff.md](colab_202604_handoff.md) kept `colab.ipynb` running on Colab 2026.04 (Python 3.12) by installing into Colab's system Python (`uv pip install --system`) and restarting the runtime with `exit()`.
+
+By November 2026, the default Google Colab runtime moved to **Python 3.13**, **PyTorch 2.14.1 / torchaudio 2.11.0**, and **NumPy 2.4.6**. Installing directly into Colab's system Python breaks immediately because:
+
+- `numpy==1.26.4` (and `numpy<2` in `requirements-colab.txt`) has no Python 3.13 support.
+- `librosa==0.9.2` and legacy audio/build packages depend on stdlib modules removed in Python 3.13 (PEP 594: `aifc`, `sunau`, `audioop`) and older `setuptools` (`pkg_resources`, removed in `setuptools 82.0.0`).
+- Unbounded dependencies (`pyannote.audio>=3.1.0`, `gradio>=4.32`, `transformers`) pull incompatible major versions (`pyannote.audio 4.x` with `torchcodec`, `gradio 5.x/6.x` breaking `gr.Blocks(theme=...)`, `transformers 5.x`, `huggingface-hub 1.x`, and `pydantic>=2.10` triggering schema errors in Gradio 4.44).
+
+## Confirmed host environment (2026-11-21)
+
+Observed on default Google Colab runtime:
+
+- Python `3.13.18` (`GCC 13.3.0`)
+- `torch`: `2.14.1+cpu` (note: that initial check ran on a CPU runtime without GPU attached)
+- `torchaudio`: `2.11.0+cpu`
+- `numpy`: `2.4.6`
+
+> **Important:** Make sure a **GPU runtime** (`T4`, `L4`, `A100`, etc.) is selected in Colab (**Runtime > Change runtime type**) before running training or GPU-accelerated preprocessing.
+
+## Architecture: Isolated `uv` Python 3.12 Virtualenv (Option A)
+
+Instead of fighting Colab's global Python 3.13 upgrades, `colab.ipynb` now provisions an isolated `.venv` inside `/content/Style-Bert-VITS2/.venv` using `uv`:
+
+1. `python3 -m pip install -q uv`
+2. `python3 scripts/colab_setup.py`
+   - Creates `.venv` with Python `3.12` via `uv venv .venv --python 3.12`
+   - Installs `requirements-colab.txt`, `requirements-colab-202611.txt`, and `constraints-colab-202611.txt` with `--torch-backend cu124`
+   - Runs `.venv/bin/python scripts/colab_setup.py --verify-in-venv` to verify versions, imports, CUDA availability, and subprocess startup
+3. All repository scripts (`initialize.py`, `slice.py`, `transcribe.py`, `preprocess_all.py`, `train_ms_jp_extra.py`, `train_ms.py`, `app.py`, `convert_onnx.py`) run explicitly via `.venv/bin/python`.
+4. Notebook Python cells that run in Colab's host kernel (`configs/paths.yml` and `config.yml` generation) use only Python stdlib + `pyyaml` and never import `gradio_tabs.train` or `style_bert_vits2`.
+5. No `exit()` crash-restart is needed anymore.
+
+## Pinned constraints and extra packages
+
+### `requirements-colab-202611.txt`
+
+Packages previously supplied implicitly by Colab's global Python or omitted by `uv venv`:
+
+- `matplotlib`: plotting spectrograms in training utils and clustering UI
+- `sentencepiece`: tokenizer dependency for English DeBERTa v3 (`spm.model`) when `use_jp_extra=False`
+- `setuptools<82`: retains `pkg_resources` removed in `setuptools 82.0.0`
+- `tensorboard`: training logs and `SummaryWriter`
+- `wheel`: build helper
+
+### `constraints-colab-202611.txt`
+
+- `numpy==1.26.4`: required by `librosa==0.9.2` and Style-Bert-VITS2
+- `torch==2.5.1`, `torchaudio==2.5.1`, `torchvision==0.20.1`: coherent CUDA 12.4 wheel stack (`--torch-backend cu124`); preserves native `torchaudio.list_audio_backends`, `torchaudio.AudioMetaData`, `torch.backends.cuda.sdp_kernel`, and pre-2.6 `torch.load` defaults
+- `transformers>=4.34.0,<5.0.0` & `huggingface-hub<1.0.0`: avoids `transformers 5.x` and `huggingface-hub 1.x` breaking changes
+- `pyannote.audio>=3.1.0,<4.0.0`: avoids `pyannote.audio 4.x` (`torchcodec` / `token` breaking changes)
+- `gradio>=4.32,<5.0.0`, `pydantic>=2.0,<2.10`, `fastapi<0.116`: avoids Gradio 5/6 `Blocks(theme=...)` breaks and the Gradio 4.44 + Pydantic 2.10+ `bool is not iterable` schema bug
+- `setuptools<82`: preserves `pkg_resources`
+
+### Defensive compatibility shims
+
+On the pinned `torch==2.5.1` + `torchaudio==2.5.1` stack, no runtime monkeypatches are required. However, `scripts/colab_setup.py --verify-in-venv` still checks `torchaudio` attributes and `torch >= 2.6`, and only writes `.venv`'s `site-packages/style_bert_vits2_colab_compat.pth` if a future override removes those APIs.
+
+## Colab rerun / update notes
+
+To pull updates in an existing Colab session without recreating `.venv` from scratch:
+
+```bash
+cd /content/Style-Bert-VITS2
+git pull
+python3 scripts/colab_setup.py
+```
+
+To wipe and rebuild `.venv` cleanly:
+
+```bash
+python3 scripts/colab_setup.py --recreate
+```
+
+## Manual smoke test checklist (Google Colab GPU runtime)
+
+Before running, verify **Runtime > Change runtime type** has a GPU (`T4`, `L4`, or `A100`) selected (do not run training on a CPU runtime):
+
+1. **Cell 0 (Environment setup)**: completes without `exit()` crash dialog; `colab_setup verification passed!` and `cuda_available=True` appear.
+2. **Drive mount & Cell 1 (Initial setup)**: `configs/paths.yml` points to Drive paths.
+3. **Cell 2.1 (Slicing & transcription)**: `.venv/bin/python slice.py` and `.venv/bin/python transcribe.py` finish with `esd.list` generated.
+4. **Cell 3 (Training preprocessing)**: `.venv/bin/python preprocess_all.py ...` finishes with `Success: All preprocess finished!`.
+5. **Cell 4 (Training)**: `config.yml` is written and `.venv/bin/python train_ms_jp_extra.py ...` starts training without import/runtime errors.
+6. **Optional**: `.venv/bin/python app.py --share` launches Gradio WebUI without Pydantic/Blocks errors.

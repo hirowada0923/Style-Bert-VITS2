@@ -1,0 +1,7 @@
+# Extra packages required in an isolated Colab virtualenv
+# (previously provided implicitly by Google Colab's system Python)
+matplotlib
+sentencepiece
+setuptools<82
+tensorboard
+wheel
